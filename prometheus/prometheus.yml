@@ -1,0 +1,61 @@
+# Prometheus — CondoHome piloto
+# Scrapes internos na rede Docker `condohome-obs`.
+# Actuator/Micrometer da API: SOMENTE hostname Docker interno.
+# Traefik NÃO deve expor /api/v1/actuator/* na internet.
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    project: condohome
+    env: pilot
+
+scrape_configs:
+  # Métricas OTLP convertidas pelo Collector (Micrometer → OTLP → Prometheus exporter)
+  - job_name: otel-collector
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - otel-collector:8889
+        labels:
+          component: otel-collector
+
+  # Self-metrics do Collector
+  - job_name: otel-collector-internal
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - otel-collector:8888
+        labels:
+          component: otel-collector-internal
+
+  # Placeholder: Actuator/Micrometer Prometheus da API
+  # Hostname Docker da API (ajuste ao nome do serviço no compose da aplicação).
+  # Endpoint típico Micrometer: /api/v1/actuator/prometheus
+  # Health (não scrape contínuo): /api/v1/actuator/health
+  # CRÍTICO: Traefik deve manter Actuator apenas na rede interna / sem router público.
+  - job_name: condohome-api
+    scrape_interval: 30s
+    metrics_path: /api/v1/actuator/prometheus
+    # Relabel: descartar labels de alta cardinalidade se a API as emitir
+    # metric_relabel_configs:
+    #   - source_labels: [organization_id]
+    #     regex: .+
+    #     action: labeldrop
+    static_configs:
+      - targets:
+          # Substitua pelo hostname Docker real da API na rede compartilhada
+          # Ex.: condohome-api:8080 — API precisa estar na mesma rede ou external network
+          - condohome-api:8080
+        labels:
+          service: condohome-api
+          component: api
+
+  # Prometheus self
+  - job_name: prometheus
+    scrape_interval: 60s
+    static_configs:
+      - targets:
+          - localhost:9090

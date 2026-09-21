@@ -1,0 +1,81 @@
+# OpenTelemetry Collector — CondoHome piloto
+# Recebe OTLP (métricas + logs). Sem exporter Tempo (fase 2).
+# API: Micrometer OTLP registry → este collector (NÃO Java agent).
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 200
+    spike_limit_mib: 50
+
+  # Mantém só labels de baixa cardinalidade; NÃO promover organization_id
+  # em todo counter se o volume de tenants for alto.
+  attributes/metrics_sanitize:
+    actions:
+      - key: http.request.body
+        action: delete
+      - key: db.statement
+        action: delete
+      - key: client_secret
+        action: delete
+      - key: authorization
+        action: delete
+
+  resource:
+    attributes:
+      - key: service.namespace
+        value: condohome
+        action: upsert
+
+exporters:
+  # Prometheus scrape endpoint — Prometheus job "otel-collector"
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: condohome
+    const_labels:
+      env: pilot
+    resource_to_telemetry_conversion:
+      enabled: true
+    # Evita explosão de séries no piloto
+    send_timestamps: true
+
+  # Logs → Loki (OTLP HTTP / push)
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+  # Debug opcional (desative em volume alto)
+  # debug:
+  #   verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, attributes/metrics_sanitize, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888

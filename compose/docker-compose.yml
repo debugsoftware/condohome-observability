@@ -1,0 +1,126 @@
+# CondoHome Observability — piloto Hostinger VPS (Docker + Traefik)
+# Rede dedicada: condohome-obs. Actuator NÃO é publicado na internet.
+# Grafana :3000 — em deploy real, proteger com Traefik + auth.
+# Sem Tempo nesta fase (traces = fase 2).
+# Sem merge/deploy prd sem ok do Rodrigo.
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    container_name: condohome-otel-collector
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    # OTLP gRPC/HTTP: só rede interna (API no mesmo Docker host/rede)
+    # Exporter Prometheus scrape: 8889 interno
+    expose:
+      - "4317"   # OTLP gRPC
+      - "4318"   # OTLP HTTP
+      - "8888"   # collector self-metrics
+      - "8889"   # prometheus exporter (scrape target)
+    networks:
+      - condohome-obs
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.50"
+
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    container_name: condohome-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.size=2GB"
+      - "--web.enable-lifecycle"
+      - "--web.listen-address=0.0.0.0:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # Preferir só rede interna. Descomente para debug local:
+    # ports:
+    #   - "127.0.0.1:9090:9090"
+    expose:
+      - "9090"
+    networks:
+      - condohome-obs
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.50"
+
+  loki:
+    image: grafana/loki:3.7.7
+    container_name: condohome-loki
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./loki/local-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    expose:
+      - "3100"
+    networks:
+      - condohome-obs
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: "0.40"
+
+  alloy:
+    image: grafana/alloy:v1.19.2
+    container_name: condohome-alloy
+    command:
+      - "run"
+      - "/etc/alloy/config.alloy"
+      - "--storage.path=/var/lib/alloy/data"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      # Logs de containers Docker (piloto no mesmo host)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "12345"
+    networks:
+      - condohome-obs
+    depends_on:
+      - loki
+    restart: unless-stopped
+    mem_limit: 192m
+    cpus: "0.30"
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    container_name: condohome-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    # UI no host — em produção: Traefik + autenticação (Basic/OAuth/SSO)
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    networks:
+      - condohome-obs
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: "0.30"
+
+networks:
+  condohome-obs:
+    name: condohome-obs
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
+  alloy-data:

@@ -1,0 +1,110 @@
+// Grafana Alloy — CondoHome piloto
+// Coleta logs de containers Docker e envia ao Loki.
+// Redação PII: padrões básicos abaixo; refine conforme logs reais da API.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// Descoberta de containers Docker
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Mantém nome do container como label
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label  = "stream"
+  }
+
+  // Filtra containers da stack obs + API (ajuste nomes)
+  // rule {
+  //   source_labels = ["container"]
+  //   regex         = "condohome-.*"
+  //   action        = "keep"
+  // }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.sanitize.receiver]
+}
+
+loki.process "sanitize" {
+  forward_to = [loki.write.default.receiver]
+
+  // Drop linhas muito ruidosas de health checks
+  stage.drop {
+    expression = "(?i)(GET /api/v1/actuator/health|/healthz|/ready)"
+    drop_counter_reason = "healthcheck_noise"
+  }
+
+  // --- Redação PII / segredos (ajuste regex conforme formato real) ---
+  // Nunca logar: client_secret, JWT/Bearer completos, CPF/CNPJ claro,
+  // nomes/emails moradores alto volume, bodies import xlsx, senhas DB,
+  // tokens Resend/WhatsApp.
+
+  stage.replace {
+    expression = "(?i)(Bearer\\s+)[A-Za-z0-9._\\-]+"
+    replace    = "${1}***REDACTED***"
+  }
+
+  stage.replace {
+    expression = "(?i)(client_secret[\"'\\s:=]+)[^\\s\"']+"
+    replace    = "${1}***REDACTED***"
+  }
+
+  stage.replace {
+    expression = "(?i)(password[\"'\\s:=]+)[^\\s\"']+"
+    replace    = "${1}***REDACTED***"
+  }
+
+  // CPF (###.###.###-##) e CNPJ (##.###.###/####-##) em texto claro
+  stage.replace {
+    expression = "\\b\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}\\b"
+    replace    = "***CPF***"
+  }
+
+  stage.replace {
+    expression = "\\b\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}\\b"
+    replace    = "***CNPJ***"
+  }
+
+  // Emails (opcional — pode ser agressivo; comente se precisar debug auth)
+  // stage.replace {
+  //   expression = "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+  //   replace    = "***EMAIL***"
+  // }
+
+  stage.labels {
+    values = {
+      job = "docker",
+    }
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// --- Opcional: file logs da API se gravar em volume montado ---
+// local.file_match "api_logs" {
+//   path_targets = [{ "__path__" = "/var/log/condohome-api/*.log" }]
+// }
+// loki.source.file "api_logs" {
+//   targets    = local.file_match.api_logs.targets
+//   forward_to = [loki.process.sanitize.receiver]
+// }
