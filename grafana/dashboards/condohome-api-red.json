@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "CondoHome piloto — RED (Rate/Errors/Duration) + métricas de import uCondo. Placeholders até Micrometer OTLP estar ligado.",
+  "description": "CondoHome piloto staging — RED + Import via OTLP (job=otel-collector, service_name=condohome-api). Actuator scrape permanece down/401 de propósito; painéis usam métricas OTLP.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -23,15 +23,16 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
-      "title": "API RED",
+      "title": "API RED (OTLP)",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Taxa de requisições HTTP (placeholder Micrometer http.server.requests)",
+      "description": "Taxa HTTP via OTLP: condohome_http_server_requests_milliseconds_count{service_name=\"condohome-api\"}. Agrupa por method/status (uri omitido — alta cardinalidade / UNKNOWN).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": false },
           "unit": "reqps"
         },
         "overrides": []
@@ -40,10 +41,11 @@
       "id": 1,
       "title": "Rate — req/s",
       "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"condohome-api\"}[5m])) by (method, status)",
+          "expr": "sum(rate(condohome_http_server_requests_milliseconds_count{service_name=\"condohome-api\"}[5m])) by (method, status)",
           "legendFormat": "{{method}} {{status}}",
           "refId": "A"
         }
@@ -51,10 +53,11 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Taxa de erros 4xx/5xx",
+      "description": "Taxa 4xx/5xx (method+status). Outcome CLIENT_ERROR/SERVER_ERROR também disponível.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
           "unit": "reqps"
         },
         "overrides": []
@@ -63,42 +66,48 @@
       "id": 2,
       "title": "Errors — 4xx/5xx",
       "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(http_server_requests_seconds_count{job=\"condohome-api\", status=~\"4..|5..\"}[5m])) by (status, uri)",
-          "legendFormat": "{{status}} {{uri}}",
+          "expr": "sum(rate(condohome_http_server_requests_milliseconds_count{service_name=\"condohome-api\", status=~\"4..|5..\"}[5m])) by (method, status)",
+          "legendFormat": "{{method}} {{status}}",
           "refId": "A"
         }
       ]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Latência p50 / p95 / p99",
+      "description": "Latência p50/p95/p99 em ms (histograma OTLP milliseconds).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "unit": "s"
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
         },
         "overrides": []
       },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
       "id": 3,
-      "title": "Duration — p50/p95/p99",
+      "title": "Duration — p50/p95/p99 (ms)",
       "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"condohome-api\"}[5m])) by (le))",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(condohome_http_server_requests_milliseconds_bucket{service_name=\"condohome-api\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"condohome-api\"}[5m])) by (le))",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(condohome_http_server_requests_milliseconds_bucket{service_name=\"condohome-api\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"condohome-api\"}[5m])) by (le))",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum(rate(condohome_http_server_requests_milliseconds_bucket{service_name=\"condohome-api\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
@@ -113,72 +122,100 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "charges_import_total — volume de imports (labels baixa cardinalidade: status, source)",
+      "description": "condohome_charges_import_total{result,source} — aparece após o 1º increment. Fallback: rate do timer count (imports observados).",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
       "id": 10,
-      "title": "charges_import_total (rate)",
+      "title": "Import rate (total + duration count)",
       "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum(rate(charges_import_total[5m])) by (status, source)",
-          "legendFormat": "{{source}} {{status}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "charges_import_duration_seconds — duração do import",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
-      "id": 11,
-      "title": "charges_import_duration_seconds",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(charges_import_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(condohome_charges_import_total{service_name=\"condohome-api\"}[5m])) by (result, source)",
+          "legendFormat": "total {{source}} {{result}}",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.50, sum(rate(charges_import_duration_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p50",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(condohome_charges_import_duration_milliseconds_count{service_name=\"condohome-api\"}[5m])) by (source)",
+          "legendFormat": "duration_count {{source}}",
           "refId": "B"
         }
       ]
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "charges_import_parse_errors_total — erros de parse",
+      "description": "Duração do import (ms) — p50/p95 + max gauge.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "id": 11,
+      "title": "Import duration p50/p95 + max (ms)",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum(rate(condohome_charges_import_duration_milliseconds_bucket{service_name=\"condohome-api\"}[5m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(condohome_charges_import_duration_milliseconds_bucket{service_name=\"condohome-api\"}[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(condohome_charges_import_duration_max_milliseconds{service_name=\"condohome-api\"}) by (source)",
+          "legendFormat": "max {{source}}",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "condohome_charges_import_parse_errors_total{error_type,source} — só após 1º parse error. Sem série = ainda sem erro registrado.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
       "id": 12,
-      "title": "charges_import_parse_errors_total",
+      "title": "Import parse errors",
       "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum(rate(charges_import_parse_errors_total[5m])) by (error_code)",
-          "legendFormat": "{{error_code}}",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(condohome_charges_import_parse_errors_total{service_name=\"condohome-api\"}[5m])) by (error_type, source)",
+          "legendFormat": "{{error_type}} {{source}}",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(condohome_charges_import_duration_milliseconds_count{service_name=\"condohome-api\"}) by (source)",
+          "legendFormat": "imports_ever {{source}}",
+          "refId": "B"
         }
       ]
     },
@@ -191,7 +228,39 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "up do job condohome-api (scrape Actuator interno)",
+      "description": "API viva via OTLP: presença de métricas JVM (service_name=condohome-api). NÃO usa up{job=condohome-api} — scrape Actuator fica 401/down de propósito (CH-43).",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "options": { "0": { "color": "red", "text": "NO DATA" }, "1": { "color": "green", "text": "LIVE" } }, "type": "value" }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 19 },
+      "id": 20,
+      "title": "API OTLP live",
+      "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(condohome_jvm_memory_used_bytes{service_name=\"condohome-api\"}) > bool 0",
+          "legendFormat": "api",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "up do scrape Prometheus no OTel Collector (:8889).",
       "fieldConfig": {
         "defaults": {
           "mappings": [
@@ -207,49 +276,62 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 19 },
-      "id": 20,
-      "title": "API scrape up",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "up{job=\"condohome-api\"}",
-          "legendFormat": "api",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [
-            { "options": { "0": { "color": "red", "text": "DOWN" }, "1": { "color": "green", "text": "UP" } }, "type": "value" }
-          ]
-        },
-        "overrides": []
-      },
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 19 },
       "id": 21,
       "title": "OTel Collector",
       "type": "stat",
+      "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "targets": [
         {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "up{job=\"otel-collector\"}",
           "refId": "A"
         }
       ]
     },
     {
-      "datasource": { "type": "loki", "uid": "loki" },
-      "description": "Logs recentes com error / exception (sem PII)",
-      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 19 },
-      "id": 22,
-      "title": "Logs — error/exception",
-      "type": "logs",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Uptime do processo API (ms) via OTLP — confirma heartbeat contínuo.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 19 },
+      "id": 23,
+      "title": "API process uptime",
+      "type": "stat",
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "targets": [
         {
-          "expr": "{job=\"docker\"} |= \"error\" or {job=\"docker\"} |= \"ERROR\" or {job=\"docker\"} |= \"Exception\"",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "condohome_process_uptime_milliseconds{service_name=\"condohome-api\"}",
+          "legendFormat": "uptime",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Logs do container API staging (Alloy). Labels reais: container / service_name = condohome-api-staging.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "id": 22,
+      "title": "Logs — API staging (error/WARN)",
+      "type": "logs",
+      "options": { "showTime": true, "wrapLogMessage": true, "enableLogDetails": true },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{container=\"condohome-api-staging\"} |~ \"(?i)error|exception|warn\"",
           "refId": "A"
         }
       ]
@@ -257,13 +339,13 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["condohome", "piloto", "red", "import"],
+  "tags": ["condohome", "piloto", "red", "import", "otlp", "ch44"],
   "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
+  "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
-  "timezone": "America/Sao_Paulo",
+  "timezone": "America/Belem",
   "title": "CondoHome — API RED + Import",
   "uid": "condohome-api-red",
-  "version": 1,
+  "version": 2,
   "weekStart": "monday"
 }
