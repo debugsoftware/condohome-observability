@@ -11,6 +11,10 @@ global:
     project: condohome
     env: pilot
 
+rule_files:
+  # Alertas mínimos piloto (CH-45). Relativo ao --config.file dir.
+  - /etc/prometheus/rules/*.yml
+
 scrape_configs:
   # Métricas OTLP convertidas pelo Collector (Micrometer → OTLP → Prometheus exporter)
   - job_name: otel-collector
