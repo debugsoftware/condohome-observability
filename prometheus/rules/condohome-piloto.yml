@@ -1,0 +1,60 @@
+# CondoHome piloto — alertas mínimos (CH-45 / H4.2d)
+# Staging-vps-piloto only. Sem Alertmanager SaaS / sem produção.
+# Fonte de verdade: Prometheus rule_files (não Grafana UI alerts nesta fase).
+#
+# NOTA: job "condohome-api" (scrape Actuator) fica up=0/401 de propósito.
+# NÃO use up{job="condohome-api"}==0 sozinho como "API down".
+# Saúde da API no piloto = presença de métricas OTLP (via otel-collector).
+
+groups:
+  - name: condohome-piloto
+    interval: 30s
+    rules:
+      - alert: OtelCollectorDown
+        expr: up{job="otel-collector"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          env: pilot
+          project: condohome
+        annotations:
+          summary: "OTel Collector scrape down (piloto)"
+          description: >-
+            up{job="otel-collector"} está 0 há ≥1m. Sem collector, a API não
+            exporta métricas OTLP para o Prometheus. Ver docs/ALERTS-RUNBOOK.md.
+
+      - alert: ApiOtlpMetricsAbsent
+        expr: absent(condohome_jvm_memory_used_bytes{service_name="condohome-api"})
+        for: 2m
+        labels:
+          severity: warning
+          env: pilot
+          project: condohome
+        annotations:
+          summary: "Métricas OTLP da API ausentes (piloto)"
+          description: >-
+            condohome_jvm_memory_used_bytes{service_name="condohome-api"}
+            ausente por ≥2m. Telemetria da API sumiu (API down, OTLP soft-fail
+            prolongado, ou collector sem scrape). Não confundir com
+            up{job="condohome-api"}==0 (Actuator scrape esperado em 401).
+            Ver docs/ALERTS-RUNBOOK.md.
+
+      - alert: ApiHttpErrorRateHigh
+        expr: |
+          (
+            sum(rate(condohome_http_server_requests_milliseconds_count{service_name="condohome-api", status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(condohome_http_server_requests_milliseconds_count{service_name="condohome-api"}[5m])), 0.01)
+          ) > 0.25
+          and
+          sum(rate(condohome_http_server_requests_milliseconds_count{service_name="condohome-api", status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          env: pilot
+          project: condohome
+        annotations:
+          summary: "Taxa de HTTP 5xx elevada na API (piloto)"
+          description: >-
+            Fração de requests 5xx > 25% (e taxa absoluta 5xx > 0.05/s) por ≥5m.
+            Ignora 4xx (ex.: 401 de smoke). Ver docs/ALERTS-RUNBOOK.md.

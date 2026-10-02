@@ -521,20 +521,19 @@ sum(rate({job="docker", container=~"condohome-api.*"}
 
 Ver também: [loki/queries/README.md](../loki/queries/README.md) com queries prontas.
 
-## Alertas (fase 2)
+## Alertas (piloto — CH-45)
 
-Quando Prometheus alerting rules forem ativados (`prometheus/rules/condohome-alerts.yml`):
+Alertas mínimos ativos via Prometheus `rule_files` → `prometheus/rules/condohome-piloto.yml`.
 
-**Testar alert rule:**
+**Runbook dedicado:** [ALERTS-RUNBOOK.md](./ALERTS-RUNBOOK.md) (OtelCollectorDown, ApiOtlpMetricsAbsent, ApiHttpErrorRateHigh).
+
+**Inspecionar:**
 ```bash
-# Prometheus UI → Alerts → verificar pending/firing
-# ou API:
-curl http://localhost:9090/api/v1/alerts
+docker exec condohome-prometheus wget -qO- http://localhost:9090/api/v1/rules
+docker exec condohome-prometheus wget -qO- http://localhost:9090/api/v1/alerts
 ```
 
-**Silence alert (temporário):**
-- Grafana → Alerting → Silences
-- Ou Prometheus Alertmanager (se configurado)
+**Silence:** sem Alertmanager no piloto; mitigar a causa ou aceitar FIRING no staging. Grafana UI alerts não são SoT nesta fase.
 
 ## Rollback
 
