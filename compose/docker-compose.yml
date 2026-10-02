@@ -111,7 +111,7 @@ services:
       - prometheus
       - loki
     restart: unless-stopped
-    mem_limit: 256m
+    mem_limit: 512m
     cpus: "0.30"
 
 networks:
